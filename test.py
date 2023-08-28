@@ -24,7 +24,7 @@ from glob import glob
 import numpy as np
 
 in_dir = '/home/graduate/celal/WORD-V0.1.0/'
-model_dir = '/home/graduate/celal/WORD-V0.1.0/results1/'
+model_dir = '/home/graduate/celal/WORD-V0.1.0/results2/'
 train_loss = np.load(os.path.join(model_dir, 'loss_train.npy'))
 train_metric = np.load(os.path.join(model_dir, 'metric_train.npy'))
 test_loss = np.load(os.path.join(model_dir, 'loss_test.npy'))
@@ -55,7 +55,7 @@ x = [i + 1 for i in range(len(test_metric))]
 y = test_metric
 plt.plot(x, y)
 
-plt.savefig("/home/graduate/celal/WORD-V0.1.0/test1/test.png")
+plt.savefig("/home/graduate/celal/WORD-V0.1.0/test2/test.png")
 path_train_volumes = sorted(glob(os.path.join(in_dir, "imagesTr", "*.nii.gz")))
 path_train_segmentation = sorted(glob(os.path.join(in_dir, "labelsTr", "*.nii.gz")))
 
@@ -84,7 +84,7 @@ device = torch.device("cuda:0")
 model = UNet(
     dimensions=3,
     in_channels=1,
-    out_channels=2,
+    out_channels=17,
     channels=(16, 32, 64, 128, 256), 
     strides=(2, 2, 2, 2),
     num_res_units=2,
@@ -116,4 +116,4 @@ with torch.no_grad():
         plt.subplot(1, 3, 3)
         plt.title(f"output {i}")
         plt.imshow(test_outputs.detach().cpu()[0, 1, :, :, i])
-        plt.savefig(f"/home/graduate/celal/WORD-V0.1.0/test1/image{i}")
+        plt.savefig(f"/home/graduate/celal/WORD-V0.1.0/test2/image{i}")

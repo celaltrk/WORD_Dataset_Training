@@ -61,7 +61,7 @@ def find_empty(in_dir):
     return list_patients
 
 
-def prepare(in_dir, pixdim=(1.5, 1.5, 2.0), a_min=-200, a_max=200, spatial_size=[256,256,256], cache=False):
+def prepare(in_dir, pixdim=(1.5, 1.5, 2.0), a_min=-200, a_max=200, spatial_size=[128,128,64], cache=False):
 
     """
     This function is for preprocessing, it contains only the basic transforms, but you can add more operations that you 

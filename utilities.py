@@ -50,7 +50,6 @@ def train(model, data_in, loss, optim, max_epochs, model_dir, test_interval=1 , 
 
             volume = batch_data["image"]
             label = batch_data["label"]
-            label = label != 0
             volume, label = (volume.to(device), label.to(device))
 
             optim.zero_grad()

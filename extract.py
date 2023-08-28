@@ -1,4 +1,3 @@
-from monai.utils import first
 from monai.transforms import(
     Compose,
     AddChanneld,
@@ -9,12 +8,12 @@ from monai.transforms import(
     Orientationd,
     ScaleIntensityRanged,
     CropForegroundd,
-    Activations,
+    SaveImage
 )
 
 from monai.networks.nets import UNet
 from monai.networks.layers import Norm
-from monai.data import DataLoader, Dataset
+from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import sliding_window_inference
 
 import os
@@ -23,8 +22,8 @@ import matplotlib.pyplot as plt
 from glob import glob
 import numpy as np
 
-in_dir = '/home/graduate/celal/WORD-V0.1.0/'
-model_dir = '/home/graduate/celal/WORD-V0.1.0/results1/'
+in_dir = '../WORD-V0.1.0/'
+model_dir = '../results/'
 train_loss = np.load(os.path.join(model_dir, 'loss_train.npy'))
 train_metric = np.load(os.path.join(model_dir, 'metric_train.npy'))
 test_loss = np.load(os.path.join(model_dir, 'loss_test.npy'))
@@ -55,7 +54,7 @@ x = [i + 1 for i in range(len(test_metric))]
 y = test_metric
 plt.plot(x, y)
 
-plt.savefig("/home/graduate/celal/WORD-V0.1.0/test2/test.png")
+plt.savefig("output/test.png")
 path_train_volumes = sorted(glob(os.path.join(in_dir, "imagesTr", "*.nii.gz")))
 path_train_segmentation = sorted(glob(os.path.join(in_dir, "labelsTr", "*.nii.gz")))
 
@@ -82,7 +81,7 @@ test_loader = DataLoader(test_ds, batch_size=1)
 device = torch.device("cuda:0")
 
 model = UNet(
-    dimensions=3,
+    spatial_dims=3,
     in_channels=1,
     out_channels=17,
     channels=(16, 32, 64, 128, 256), 
@@ -97,25 +96,15 @@ sw_batch_size = 4
 roi_size = (128, 128, 64)
 j = 0
 with torch.no_grad():
+    saver = SaveImage(output_dir='output/',output_postfix=f'test')
     for test_patient in test_loader:
+        j+=1
         t_volume = test_patient['image']
         t_segmentation = test_patient['label']
 
         test_outputs = sliding_window_inference(t_volume.to(device), roi_size, sw_batch_size, model)
-        sigmoid_activation = Activations(sigmoid=True)
-        test_outputs = sigmoid_activation(test_outputs)
-        test_outputs = test_outputs > 0.53
+        test_outputs = test_outputs.argmax(dim=1)
+        test_patient["output"] = test_outputs
 
-        for i in range(32):
-            plt.figure("check", (18, 6))
-            plt.subplot(1, 3, 1)
-            plt.title(f"image {i}")
-            plt.imshow(test_patient["image"][0, 0, :, :, i], cmap="gray")
-            plt.subplot(1, 3, 2)
-            plt.title(f"label {i}")
-            plt.imshow(test_patient["label"][0, 0, :, :, i] != 0)
-            plt.subplot(1, 3, 3)
-            plt.title(f"output {i}")
-            plt.imshow(test_outputs.detach().cpu()[0, 1, :, :, i])
-            plt.savefig(f"/home/graduate/celal/WORD-V0.1.0/test_all/image{j}_{i}")
-    j+=1
+        for data in decollate_batch(test_patient):
+            saver(data["output"])
