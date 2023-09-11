@@ -1,34 +1,44 @@
-from monai.utils import first
-import matplotlib.pyplot as plt
+# Import necessary libraries
 import torch
 import os
 import numpy as np
 from monai.losses import DiceLoss
-from tqdm import tqdm
 
 def dice_metric(predicted, target):
     '''
-    In this function we take `predicted` and `target` (label) to calculate the dice coeficient then we use it 
-    to calculate a metric value for the training and the validation.
+    Calculate the Dice coefficient metric between predicted and target masks.
+
+    Args:
+        predicted (torch.Tensor): Predicted mask tensor.
+        target (torch.Tensor): Target mask tensor.
+
+    Returns:
+        float: Dice coefficient value.
     '''
-    dice_value = DiceLoss(to_onehot_y=True, sigmoid=True, squared_pred=True)
+    
+    # Initialize the DiceLoss for calculating the Dice coefficient
+    dice_value = DiceLoss(to_onehot_y=True, softmax=True, squared_pred=True)
+    
+    # Calculate the Dice coefficient
     value = 1 - dice_value(predicted, target).item()
     return value
 
-def calculate_weights(val1, val2):
+def train(model, data_in, loss, optim, max_epochs, model_dir):
     '''
-    In this function we take the number of the background and the forgroud pixels to return the `weights` 
-    for the cross entropy loss values.
-    '''
-    count = np.array([val1, val2])
-    summ = count.sum()
-    weights = count/summ
-    weights = 1/weights
-    summ = weights.sum()
-    weights = weights/summ
-    return torch.tensor(weights, dtype=torch.float32)
+    Train a segmentation model using the provided arguments.
 
-def train(model, data_in, loss, optim, max_epochs, model_dir, test_interval=1 , device=torch.device("cuda:0")):
+    Args:
+        model (torch.nn.Module): The neural network model to train.
+        data_in (tuple): A tuple containing train and test data loaders (train_loader, test_loader).
+        loss (callable): The loss function used for training.
+        optim (torch.optim.Optimizer): The optimizer used for updating model weights.
+        max_epochs (int): The maximum number of training epochs.
+        model_dir (str): Directory to save training-related files.
+
+    Returns:
+        None
+    '''
+    device = torch.device("cuda:0")
     best_metric = -1
     best_metric_epoch = -1
     save_loss_train = []
@@ -37,157 +47,86 @@ def train(model, data_in, loss, optim, max_epochs, model_dir, test_interval=1 , 
     save_metric_test = []
     train_loader, test_loader = data_in
 
-    for epoch in range(max_epochs):
-        print("-" * 10)
-        print(f"epoch {epoch + 1}/{max_epochs}")
+    for epoch in range(1, max_epochs+1):
+        print("-"*10)
+        print(f"Epoch {epoch}/{max_epochs}")
         model.train()
         train_epoch_loss = 0
         train_step = 0
         epoch_metric_train = 0
         for batch_data in train_loader:
-            
             train_step += 1
-
             volume = batch_data["image"]
             label = batch_data["label"]
             volume, label = (volume.to(device), label.to(device))
-
             optim.zero_grad()
             outputs = model(volume)
             
+            # Calculate the training loss
             train_loss = loss(outputs, label)
             
             train_loss.backward()
             optim.step()
 
             train_epoch_loss += train_loss.item()
-            print(
-                f"{train_step}/{len(train_loader) // train_loader.batch_size}, "
-                f"Train_loss: {train_loss.item():.4f}")
+            print(f"{train_step}/{len(train_loader) // train_loader.batch_size}, Train loss: {train_loss.item():.4f}")
 
+            # Calculate the Dice coefficient for training
             train_metric = dice_metric(outputs, label)
             epoch_metric_train += train_metric
-            print(f'Train_dice: {train_metric:.4f}')
+            print(f'Train dice: {train_metric:.4f}')
 
         print('-'*20)
         
+        # Calculate the mean training loss for the epoch
         train_epoch_loss /= train_step
-        print(f'Epoch_loss: {train_epoch_loss:.4f}')
+        print(f'Epoch loss: {train_epoch_loss:.4f}')
         save_loss_train.append(train_epoch_loss)
         np.save(os.path.join(model_dir, 'loss_train.npy'), save_loss_train)
         
+        # Calculate the mean training Dice coefficient for the epoch
         epoch_metric_train /= train_step
-        print(f'Epoch_metric: {epoch_metric_train:.4f}')
+        print(f'Epoch metric: {epoch_metric_train:.4f}')
 
         save_metric_train.append(epoch_metric_train)
         np.save(os.path.join(model_dir, 'metric_train.npy'), save_metric_train)
+        model.eval()
+        with torch.no_grad():
+            test_epoch_loss = test_metric = epoch_metric_test = test_step = 0
 
-        if (epoch + 1) % test_interval == 0:
-
-            model.eval()
-            with torch.no_grad():
-                test_epoch_loss = 0
-                test_metric = 0
-                epoch_metric_test = 0
-                test_step = 0
-
-                for test_data in test_loader:
-
-                    test_step += 1
-
-                    test_volume = test_data["image"]
-                    test_label = test_data["label"]
-                    test_label = test_label != 0
-                    test_volume, test_label = (test_volume.to(device), test_label.to(device),)
-                    
-                    test_outputs = model(test_volume)
-                    
-                    test_loss = loss(test_outputs, test_label)
-                    test_epoch_loss += test_loss.item()
-                    test_metric = dice_metric(test_outputs, test_label)
-                    epoch_metric_test += test_metric
-                    
+            for test_data in test_loader:
+                test_step += 1
+                test_volume = test_data["image"].to(device)
+                test_label = test_data["label"].to(device)
+                test_outputs = model(test_volume)
                 
-                test_epoch_loss /= test_step
-                print(f'test_loss_epoch: {test_epoch_loss:.4f}')
-                save_loss_test.append(test_epoch_loss)
-                np.save(os.path.join(model_dir, 'loss_test.npy'), save_loss_test)
-
-                epoch_metric_test /= test_step
-                print(f'test_dice_epoch: {epoch_metric_test:.4f}')
-                save_metric_test.append(epoch_metric_test)
-                np.save(os.path.join(model_dir, 'metric_test.npy'), save_metric_test)
-
-                if epoch_metric_test > best_metric:
-                    best_metric = epoch_metric_test
-                    best_metric_epoch = epoch + 1
-                    torch.save(model.state_dict(), os.path.join(
-                        model_dir, "best_metric_model.pth"))
+                # Calculate the test loss
+                test_loss = loss(test_outputs, test_label)
+                test_epoch_loss += test_loss.item()
                 
-                print(
-                    f"current epoch: {epoch + 1} current mean dice: {test_metric:.4f}"
-                    f"\nbest mean dice: {best_metric:.4f} "
-                    f"at epoch: {best_metric_epoch}"
-                )
+                # Calculate the Dice coefficient for testing
+                test_metric = dice_metric(test_outputs, test_label)
+                epoch_metric_test += test_metric
+
+            # Calculate the mean test loss for the epoch    
+            test_epoch_loss /= test_step
+            print(f'Test loss epoch: {test_epoch_loss:.4f}')
+            save_loss_test.append(test_epoch_loss)
+            np.save(os.path.join(model_dir, 'loss_test.npy'), save_loss_test)
+
+            # Calculate the mean test Dice coefficient for the epoch
+            epoch_metric_test /= test_step
+            print(f'Test dice epoch: {epoch_metric_test:.4f}')
+            save_metric_test.append(epoch_metric_test)
+            np.save(os.path.join(model_dir, 'metric_test.npy'), save_metric_test)
+
+            # Save the model checkpoint if the test Dice coefficient improved
+            if epoch_metric_test > best_metric:
+                best_metric = epoch_metric_test
+                best_metric_epoch = epoch
+                torch.save(model.state_dict(), os.path.join(model_dir, "best_metric_model.pth"))
+            
+            print(f"Current epoch: {epoch}\nCurrent mean dice: {test_metric:.4f}\nBest mean dice: {best_metric:.4f} at epoch: {best_metric_epoch}")
 
 
-    print(
-        f"train completed, best_metric: {best_metric:.4f} "
-        f"at epoch: {best_metric_epoch}")
-
-
-def show_patient(data, SLICE_NUMBER=1, train=True, test=False):
-    """
-    This function is to show one patient from your datasets, so that you can si if the it is okay or you need 
-    to change/delete something.
-
-    `data`: this parameter should take the patients from the data loader, which means you need to can the function
-    prepare first and apply the transforms that you want after that pass it to this function so that you visualize 
-    the patient with the transforms that you want.
-    `SLICE_NUMBER`: this parameter will take the slice number that you want to display/show
-    `train`: this parameter is to say that you want to display a patient from the training data (by default it is true)
-    `test`: this parameter is to say that you want to display a patient from the testing patients.
-    """
-
-    check_patient_train, check_patient_test = data
-
-    view_train_patient = first(check_patient_train)
-    view_test_patient = first(check_patient_test)
-
-    
-    if train:
-        plt.figure("Visualization Train", (12, 6))
-        plt.subplot(1, 2, 1)
-        plt.title(f"image {SLICE_NUMBER}")
-        plt.imshow(view_train_patient["image"][0, 0, :, :, SLICE_NUMBER], cmap="gray")
-
-        plt.subplot(1, 2, 2)
-        plt.title(f"label {SLICE_NUMBER}")
-        plt.imshow(view_train_patient["label"][0, 0, :, :, SLICE_NUMBER])
-        plt.show()
-    
-    if test:
-        plt.figure("Visualization Test", (12, 6))
-        plt.subplot(1, 2, 1)
-        plt.title(f"image {SLICE_NUMBER}")
-        plt.imshow(view_test_patient["image"][0, 0, :, :, SLICE_NUMBER], cmap="gray")
-
-        plt.subplot(1, 2, 2)
-        plt.title(f"label {SLICE_NUMBER}")
-        plt.imshow(view_test_patient["label"][0, 0, :, :, SLICE_NUMBER])
-        plt.show()
-
-
-def calculate_pixels(data):
-    val = np.zeros((1, 2))
-
-    for batch in tqdm(data):
-        batch_label = batch["label"] != 0
-        _, count = np.unique(batch_label, return_counts=True)
-
-        if len(count) == 1:
-            count = np.append(count, 0)
-        val += count
-
-    print('The last values:', val)
-    return val
+    print(f"Training completed.\n Best metric: {best_metric:.4f} at epoch: {best_metric_epoch}")
