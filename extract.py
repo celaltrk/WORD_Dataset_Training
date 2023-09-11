@@ -1,3 +1,4 @@
+# Import necessary libraries
 from monai.transforms import(
     Compose,
     AddChanneld,
@@ -15,55 +16,64 @@ from monai.networks.nets import UNet
 from monai.networks.layers import Norm
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.inferers import sliding_window_inference
-
 import os
 import torch
 import matplotlib.pyplot as plt
 from glob import glob
 import numpy as np
 
-in_dir = '../WORD-V0.1.0/'
+# Define input and model directories
+in_dir = '../'
 model_dir = '../results/'
+
+# Load training and testing loss and metric data
 train_loss = np.load(os.path.join(model_dir, 'loss_train.npy'))
 train_metric = np.load(os.path.join(model_dir, 'metric_train.npy'))
 test_loss = np.load(os.path.join(model_dir, 'loss_test.npy'))
 test_metric = np.load(os.path.join(model_dir, 'metric_test.npy'))
 
+# Create a figure for plottings
 plt.figure("Results", (12, 6))
+
+# Plot training loss
 plt.subplot(2, 2, 1)
 plt.title("Train dice loss")
 x = [i + 1 for i in range(len(train_loss))]
 y = train_loss
 plt.plot(x, y)
 
+# Plot training metric
 plt.subplot(2, 2, 2)
 plt.title("Train metric dice")
 x = [i + 1 for i in range(len(train_metric))]
 y = train_metric
 plt.plot(x, y)
 
+# Plot testing loss
 plt.subplot(2, 2, 3)
 plt.title("Test dice loss")
 x = [i + 1 for i in range(len(test_loss))]
 y = test_loss
 plt.plot(x, y)
 
+# Plot testing metric
 plt.subplot(2, 2, 4)
 plt.title("Test metric dice")
 x = [i + 1 for i in range(len(test_metric))]
 y = test_metric
 plt.plot(x, y)
 
+# Save the figure as an image
 plt.savefig("output/test.png")
-path_train_volumes = sorted(glob(os.path.join(in_dir, "imagesTr", "*.nii.gz")))
-path_train_segmentation = sorted(glob(os.path.join(in_dir, "labelsTr", "*.nii.gz")))
 
+# Get file paths for testing volumes and segmentations
 path_test_volumes = sorted(glob(os.path.join(in_dir, "imagesVal", "*.nii.gz")))
 path_test_segmentation = sorted(glob(os.path.join(in_dir, "labelsVal", "*.nii.gz")))
 
-train_files = [{"image": image_name, "label": label_name} for image_name, label_name in zip(path_train_volumes, path_train_segmentation)]
+# Create a list of dictionaries specifying image-label pairs for testing
 test_files = [{"image": image_name, "label": label_name} for image_name, label_name in zip(path_test_volumes, path_test_segmentation)]
-test_files = test_files[0:9]
+
+# Define data transforms for testing
 test_transforms = Compose(
     [
         LoadImaged(keys=["image", "label"]),
@@ -78,8 +88,11 @@ test_transforms = Compose(
 )
 test_ds = Dataset(data=test_files, transform=test_transforms)
 test_loader = DataLoader(test_ds, batch_size=1)
+
+# Set the device for inference to CUDA if available, otherwise use CPU
 device = torch.device("cuda:0")
 
+# Create a U-Net model and load the best metric model checkpoint
 model = UNet(
     spatial_dims=3,
     in_channels=1,
@@ -92,19 +105,23 @@ model = UNet(
 
 model.load_state_dict(torch.load(os.path.join(model_dir, "best_metric_model.pth")))
 model.eval()
-sw_batch_size = 4
-roi_size = (128, 128, 64)
-j = 0
+
+# Perform inference on test data
 with torch.no_grad():
-    saver = SaveImage(output_dir='output/',output_postfix=f'test')
+    # Create a SaveImage object for saving output images
+    saver = SaveImage(output_dir='output', output_postfix='test', output_ext=".nii.gz")
     for test_patient in test_loader:
-        j+=1
         t_volume = test_patient['image']
         t_segmentation = test_patient['label']
 
-        test_outputs = sliding_window_inference(t_volume.to(device), roi_size, sw_batch_size, model)
-        test_outputs = test_outputs.argmax(dim=1)
+        # Define sliding window inference parameters
+        sw_batch_size = 4
+        roi_size = (128, 128, 64)
+
+        # Perform sliding window inference
+        test_outputs = sliding_window_inference(t_volume.to(device), roi_size, sw_batch_size, model).argmax(dim=1)
         test_patient["output"] = test_outputs
 
+        # Save the output images
         for data in decollate_batch(test_patient):
             saver(data["output"])
